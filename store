@@ -1,0 +1,93 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require_relative './entities'
+
+products_list = {
+  "Laptop" => {price: 1000, quantity: 10},
+  "Mouse" => {price: 25, quantity: 10},
+  "Keyboard" => {price: 75, quantity: 10}
+}
+
+stock = Stock.instance
+products_list.each { |name, data| stock.add(Product.new(name: name, price: data[:price]), quantity: data[:quantity]) }
+
+store = StoreService.new
+current_order = nil
+
+loop do
+  puts "\n=== Loja ==="
+  puts "1. Ver produtos"
+  puts "2. Criar pedido"
+  puts "3. Adicionar item ao pedido"
+  puts "4. Ver pedido atual"
+  puts "5. Pagar pedido"
+  puts "6. Sair"
+  print "> "
+
+  case gets&.chomp
+  when "1"
+    puts "\nProdutos disponíveis:"
+    store.list_products.each do |name, data|
+      puts "  #{name} - R$#{data[:product].price} (#{data[:quantity]} em estoque)"
+    end
+
+  when "2"
+    print "Nome: "
+    name = gets&.chomp
+    print "Email: "
+    email = gets&.chomp
+    current_order = store.create_order(name: name, email: email)
+    puts "Pedido criado para #{name}!"
+
+  when "3"
+    unless current_order
+      puts "Crie um pedido primeiro!"
+      next
+    end
+    puts "Produtos: #{store.list_products.keys.join(', ')}"
+    print "Nome do produto: "
+    product_name = gets&.chomp
+    print "Quantidade: "
+    quantity = gets&.chomp.to_i
+    begin
+      store.add_item(current_order, product_name, quantity)
+      puts "Item adicionado!"
+    rescue => e
+      puts "Erro: #{e.message}"
+    end
+
+  when "4"
+    unless current_order
+      puts "Nenhum pedido ativo."
+      next
+    end
+    puts "\nPedido de #{current_order.customer.name} (#{current_order.status}):"
+    current_order.items.each do |item|
+      puts "  #{item.quantity}x #{item.product.name} = R$#{item.subtotal}"
+    end
+    puts "  Total: R$#{current_order.total}"
+
+  when "5"
+    unless current_order
+      puts "Nenhum pedido ativo."
+      next
+    end
+    print "Método de pagamento (pix, cartao, boleto): "
+    method = gets&.chomp
+    begin
+      store.pay_order(current_order, method)
+      puts "Pagamento realizado!"
+      current_order = nil
+    rescue => e
+      puts "Erro: #{e.message}"
+    end
+
+  when "6"
+    puts "Até logo!"
+    break
+
+  else
+    puts "Opção inválida."
+  end
+end
