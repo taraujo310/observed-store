@@ -42,31 +42,28 @@ class Order
     @items.sum(&:subtotal)
   end
 
-  def confirm!
-    @items.each do |item|
-      unless Stock.instance.available?(item.product.name, quantity: item.quantity)
-        raise "Estoque insuficiente para #{item.product.name}"
-      end
-    end
-
-    @items.each { |item| Stock.instance.decrease(item.product.name, quantity: item.quantity) }
-    EmailService.notify(:order_confirmed, @customer, self)
-    InvoiceService.create(@customer, self)
-  end
-
   def pay!(method)
     raise "Pedido já pago" if @status == :paid
     raise "Pedido sem itens" if @items.empty?
+    Stock.instance.validate_availability!(@items)
 
     PaymentService.process(self, method)
-    @status = :paid
     confirm!
+    @status = :paid
+  end
+
+  private
+
+  def confirm!
+    @items.each { |item| Stock.instance.decrease(item.product.name, quantity: item.quantity) }
+    EmailService.notify(:order_confirmed, @customer, self)
+    InvoiceService.create(@customer, self)
   end
 end
 
 class Product
   attr_reader :name, :price
-  
+
   def initialize(name:, price:)
     @name = name
     @price = price
@@ -106,11 +103,11 @@ end
 
 class Stock
   include Singleton
-  
+
   def initialize
     @products = {}
   end
-  
+
   def products
     @products
   end
@@ -120,10 +117,22 @@ class Stock
   end
 
   def decrease(product_name, quantity:)
+    raise "Produto não encontrado: #{product_name}" unless @products.key?(product_name)
+
     @products[product_name][:quantity] -= quantity
   end
 
   def available?(product_name, quantity:)
+    raise "Produto não encontrado: #{product_name}" unless @products.key?(product_name)
+
     @products[product_name][:quantity] >= quantity
+  end
+
+  def validate_availability!(items)
+    items.each do |item|
+      unless available?(item.product.name, quantity: item.quantity)
+        raise "Estoque insuficiente para #{item.product.name}"
+      end
+    end
   end
 end
