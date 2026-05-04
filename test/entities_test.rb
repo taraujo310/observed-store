@@ -72,6 +72,8 @@ class OrderTest < Minitest::Test
     setup_stock
     @customer = Customer.new("João", "joao@email.com")
     @order = Order.new(customer: @customer)
+
+    @order.subscribe(Stock.instance)
   end
 
   def test_starts_with_pending_status

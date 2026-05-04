@@ -1,20 +1,30 @@
 require 'singleton'
+require_relative './event_publisher'
 
 module EmailService
-  def self.notify(event, customer, order)
-    puts "[EmailService] Enviando email '#{event}' para #{customer.email}"
+  def self.update(event, data)
+    case event
+    when :payment_processing
+      puts "[EmailService] Enviando email de recibo de processamento para #{data[:order].customer.email}"
+    when :order_confirmed
+      puts "[EmailService] Enviando email de confirmação de compra para #{data[:order].customer.email}"
+    end
   end
 end
 
 module InvoiceService
-  def self.create(customer, order)
-    puts "[InvoiceService] Criando nota fiscal para #{customer.name} no valor de #{order.total}"
+  def self.update(event, data)
+    return unless event == :order_confirmed
+
+    puts "[InvoiceService] Criando nota fiscal para #{data[:order].customer.name} no valor de R$#{data[:order].total}"
   end
 end
 
 module PaymentService
-  def self.process(order, method)
-    puts "[PaymentService] Processando pagamento de #{order.total} via #{method}"
+  def self.update(event, data)
+    return unless event == :payment_processing
+
+    puts "[PaymentService] Processando pagamento de R$#{data[:order].total} via #{data[:method]}"
   end
 end
 
@@ -26,6 +36,8 @@ OrderItem = Struct.new(:product, :quantity) do
 end
 
 class Order
+  include EventPublisher
+
   attr_reader :customer, :items, :status
 
   def initialize(customer:)
@@ -47,7 +59,8 @@ class Order
     raise "Pedido sem itens" if @items.empty?
     Stock.instance.validate_availability!(@items)
 
-    PaymentService.process(self, method)
+    # Notifica os serviços de pagamento e email antes de confirmar o pedido
+    notify(:payment_processing, {order: self, method: method})
     confirm!
     @status = :paid
   end
@@ -55,9 +68,8 @@ class Order
   private
 
   def confirm!
-    @items.each { |item| Stock.instance.decrease(item.product.name, quantity: item.quantity) }
-    EmailService.notify(:order_confirmed, @customer, self)
-    InvoiceService.create(@customer, self)
+    # Notifica os serviços de email, estoque e nota fiscal após confirmar o pedido
+    notify(:order_confirmed, { order: self })
   end
 end
 
@@ -82,6 +94,13 @@ class StoreService
   def create_order(name:, email:)
     customer = Customer.new(name, email)
     order = Order.new(customer: customer)
+
+    # Inscreve os serviços para receber notificações do pedido
+    order.subscribe(Stock.instance)
+    order.subscribe(EmailService)
+    order.subscribe(InvoiceService)
+    order.subscribe(PaymentService)
+
     @orders << order
     order
   end
@@ -114,6 +133,17 @@ class Stock
 
   def add(product, quantity:)
     @products[product.name] = {product: product, quantity: quantity}
+  end
+
+  # O Stock agora é um especialista autônomo, ele decide quando agir ao ouvir o evento de confirmação do pedido
+  def update(event, data)
+    return unless event == :order_confirmed
+
+    order = data[:order]
+    puts "[Stock] Baixando estoque para o pedido de #{order.customer.name}"
+    order.items.each do |item|
+      decrease(item.product.name, quantity: item.quantity)
+    end
   end
 
   def decrease(product_name, quantity:)
