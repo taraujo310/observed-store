@@ -5,9 +5,9 @@ module EmailService
   def self.update(event, data)
     case event
     when :payment_processing
-      puts "[EmailService] Enviando email de recibo de processamento para #{data[:order].customer.email}"
+      puts "[EmailService] Enviando email de recibo de processamento para #{data[:customer_email]}"
     when :order_confirmed
-      puts "[EmailService] Enviando email de confirmação de compra para #{data[:order].customer.email}"
+      puts "[EmailService] Enviando email de confirmação de compra para #{data[:customer_email]}"
     end
   end
 end
@@ -16,7 +16,7 @@ module InvoiceService
   def self.update(event, data)
     return unless event == :order_confirmed
 
-    puts "[InvoiceService] Criando nota fiscal para #{data[:order].customer.name} no valor de R$#{data[:order].total}"
+    puts "[InvoiceService] Criando nota fiscal para #{data[:customer_name]} no valor de R$#{data[:order_total]}"
   end
 end
 
@@ -24,7 +24,7 @@ module PaymentService
   def self.update(event, data)
     return unless event == :payment_processing
 
-    puts "[PaymentService] Processando pagamento de R$#{data[:order].total} via #{data[:method]}"
+    puts "[PaymentService] Processando pagamento de R$#{data[:order_total]} via #{data[:payment_method]}"
   end
 end
 
@@ -54,13 +54,18 @@ class Order
     @items.sum(&:subtotal)
   end
 
-  def pay!(method)
+  def pay!(payment_method)
     raise "Pedido já pago" if @status == :paid
     raise "Pedido sem itens" if @items.empty?
     Stock.instance.validate_availability!(@items)
 
-    # Notifica os serviços de pagamento e email antes de confirmar o pedido
-    notify(:payment_processing, {order: self, method: method})
+    # Order notifica a quem tiver ouvindo que está processando o pagamento
+    notify(:payment_processing, {
+      customer_email: customer.email,
+      order_total: total,
+      payment_method: payment_method
+    })
+
     confirm!
     @status = :paid
   end
@@ -68,8 +73,13 @@ class Order
   private
 
   def confirm!
-    # Notifica os serviços de email, estoque e nota fiscal após confirmar o pedido
-    notify(:order_confirmed, { order: self })
+    # Order notifica a quem tiver ouvindo que o pedido foi confirmado
+    notify(:order_confirmed, {
+      customer_name: customer.name,
+      customer_email: customer.email,
+      items: items.map { |i| { product: i.product.name, quantity: i.quantity } }.freeze,
+      order_total: total
+    })
   end
 end
 
@@ -115,8 +125,8 @@ class StoreService
     item
   end
 
-  def pay_order(order, method)
-    order.pay!(method)
+  def pay_order(order, payment_method)
+    order.pay!(payment_method)
   end
 end
 
@@ -139,10 +149,10 @@ class Stock
   def update(event, data)
     return unless event == :order_confirmed
 
-    order = data[:order]
-    puts "[Stock] Baixando estoque para o pedido de #{order.customer.name}"
-    order.items.each do |item|
-      decrease(item.product.name, quantity: item.quantity)
+    puts "[Stock] Baixando estoque para o pedido de #{data[:customer_name]}"
+
+    data[:items].each do |item|
+      decrease(item[:product], quantity: item[:quantity])
     end
   end
 
